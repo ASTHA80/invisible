@@ -1,0 +1,13 @@
+# Frontend ? Backend connection checklist
+# Backend should be running on http://127.0.0.1:8000
+#
+# After this, your frontend should:
+# 1. Login with Name + Email
+# 2. Create/retrieve a user
+# 3. Start new users with 0 observations/problems/interventions
+# 4. Send user_id with every observation
+# 5. Fetch only that user's observations/problems/interventions
+#
+# IMPORTANT:
+# Your current App.tsx is the large UI file we built earlier.
+# Replace it with the API-connected version in the next step.
