@@ -1,0 +1,1260 @@
+﻿import React, { useMemo, useState } from "react";
+import {
+  Activity,
+  ArrowRight,
+  BarChart3,
+  Check,
+  ChevronRight,
+  CircleHelp,
+  Clock3,
+  Compass,
+  Eye,
+  Home,
+  Lightbulb,
+  LogOut,
+  Menu,
+  Network,
+  Plus,
+  Search,
+  Settings,
+  Sparkles,
+  Target,
+  TrendingDown,
+  User,
+  X,
+} from "lucide-react";
+
+import ReactFlow, {
+  Background,
+  Controls,
+  Handle,
+  Position,
+  type Edge,
+  type Node,
+} from "reactflow";
+
+import "reactflow/dist/style.css";
+
+
+type Page =
+  | "dashboard"
+  | "tell"
+  | "discover"
+  | "map"
+  | "problems"
+  | "interventions"
+  | "progress"
+  | "insights";
+
+
+type Observation = {
+  id: number;
+  text: string;
+  category: string;
+  minutes: number;
+  day: string;
+};
+
+
+type Problem = {
+  id: string;
+  title: string;
+  description: string;
+  occurrences: number;
+  minutes: number;
+  severity: "High" | "Medium" | "Low";
+};
+
+
+const initialObservations: Observation[] = [
+  {
+    id: 1,
+    text: "Couldn't find my ID before leaving for college.",
+    category: "Departure",
+    minutes: 8,
+    day: "Monday",
+  },
+  {
+    id: 2,
+    text: "Forgot my charger and had to go upstairs.",
+    category: "Departure",
+    minutes: 6,
+    day: "Tuesday",
+  },
+  {
+    id: 3,
+    text: "Couldn't find my keys before leaving.",
+    category: "Departure",
+    minutes: 10,
+    day: "Wednesday",
+  },
+  {
+    id: 4,
+    text: "Spent 10 minutes searching for my notebook.",
+    category: "Study",
+    minutes: 10,
+    day: "Thursday",
+  },
+  {
+    id: 5,
+    text: "Forgot my ID again.",
+    category: "Departure",
+    minutes: 8,
+    day: "Friday",
+  },
+];
+
+
+const initialProblems: Problem[] = [
+  {
+    id: "departure",
+    title: "Departure preparation",
+    description:
+      "Frequently needed items do not have a consistent place before leaving home.",
+    occurrences: 7,
+    minutes: 42,
+    severity: "High",
+  },
+  {
+    id: "context",
+    title: "Context switching",
+    description:
+      "Small interruptions are breaking your focus and creating extra recovery time.",
+    occurrences: 5,
+    minutes: 23,
+    severity: "Medium",
+  },
+  {
+    id: "rework",
+    title: "Avoidable rework",
+    description:
+      "Some tasks are being repeated because information or files are difficult to find.",
+    occurrences: 3,
+    minutes: 18,
+    severity: "Medium",
+  },
+  {
+    id: "searching",
+    title: "Searching friction",
+    description:
+      "Repeatedly looking for things is quietly consuming useful time.",
+    occurrences: 4,
+    minutes: 16,
+    severity: "Low",
+  },
+];
+
+
+function App() {
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [page, setPage] = useState<Page>("dashboard");
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [observations, setObservations] =
+    useState<Observation[]>(initialObservations);
+  const [problems] = useState<Problem[]>(initialProblems);
+  const [selectedProblem, setSelectedProblem] = useState<Problem | null>(null);
+  const [input, setInput] = useState("");
+  const [discovering, setDiscovering] = useState(false);
+  const [toast, setToast] = useState("");
+
+  const totalMinutes = useMemo(
+    () => observations.reduce((sum, item) => sum + item.minutes, 0),
+    [observations]
+  );
+
+  const navigate = (next: Page) => {
+    setPage(next);
+    setMobileOpen(false);
+    setSelectedProblem(null);
+  };
+
+  const addObservation = () => {
+    if (!input.trim()) return;
+
+    const newObservation: Observation = {
+      id: Date.now(),
+      text: input.trim(),
+      category: "New observation",
+      minutes: 5,
+      day: "Today",
+    };
+
+    setObservations((prev) => [newObservation, ...prev]);
+    setInput("");
+    setDiscovering(true);
+    setToast("Observation added");
+
+    setTimeout(() => {
+      setDiscovering(false);
+      setPage("discover");
+      setToast("A new pattern is ready to explore");
+    }, 1800);
+
+    setTimeout(() => setToast(""), 3500);
+  };
+
+  if (!loggedIn) {
+    return <LoginPage onLogin={() => setLoggedIn(true)} />;
+  }
+
+  return (
+    <div className="app-shell">
+      <Sidebar
+        page={page}
+        onNavigate={navigate}
+        onLogout={() => setLoggedIn(false)}
+      />
+
+      <div className="mobile-topbar">
+        <button
+          className="icon-button"
+          onClick={() => setMobileOpen(true)}
+          aria-label="Open menu"
+        >
+          <Menu size={22} />
+        </button>
+
+        <div className="mobile-logo">
+          <div className="logo-mark">I</div>
+          <span>INVISIBLE</span>
+        </div>
+
+        <button className="profile-button">
+          <User size={19} />
+        </button>
+      </div>
+
+      {mobileOpen && (
+        <div className="mobile-menu-overlay" onClick={() => setMobileOpen(false)}>
+          <aside
+            className="mobile-menu"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mobile-menu-header">
+              <div className="brand">
+                <div className="logo-mark">I</div>
+                <div>
+                  <strong>INVISIBLE</strong>
+                  <span>Find what you stopped noticing.</span>
+                </div>
+              </div>
+
+              <button
+                className="icon-button"
+                onClick={() => setMobileOpen(false)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <Navigation
+              page={page}
+              onNavigate={navigate}
+              mobile
+            />
+          </aside>
+        </div>
+      )}
+
+      <main className="main-content">
+        <header className="desktop-header">
+          <div>
+            <span className="eyebrow">PERSONAL PATTERN DISCOVERY</span>
+            <h1>
+              {page === "dashboard" && "Good to see you."}
+              {page === "tell" && "Tell INVISIBLE what happened."}
+              {page === "discover" && "There’s a pattern here."}
+              {page === "map" && "Your problem map."}
+              {page === "problems" && "Problems worth noticing."}
+              {page === "interventions" && "Small changes, tested."}
+              {page === "progress" && "See what changed."}
+              {page === "insights" && "What you might not be noticing."}
+            </h1>
+          </div>
+
+          <div className="header-actions">
+            <button className="header-button">
+              <Search size={17} />
+              Search
+            </button>
+            <div className="avatar">A</div>
+          </div>
+        </header>
+
+        <div className="page-content">
+          {page === "dashboard" && (
+            <Dashboard
+              observations={observations}
+              problems={problems}
+              totalMinutes={totalMinutes}
+              onNavigate={navigate}
+              onSelectProblem={(problem) => {
+                setSelectedProblem(problem);
+                setPage("problems");
+              }}
+            />
+          )}
+
+          {page === "tell" && (
+            <TellPage
+              input={input}
+              setInput={setInput}
+              onSubmit={addObservation}
+              discovering={discovering}
+              observations={observations}
+            />
+          )}
+
+          {page === "discover" && (
+            <DiscoverPage
+              problems={problems}
+              onMap={() => navigate("map")}
+              onProblem={(problem) => {
+                setSelectedProblem(problem);
+                setPage("problems");
+              }}
+            />
+          )}
+
+          {page === "map" && (
+            <ProblemMap
+              problems={problems}
+              onProblem={(problem) => {
+                setSelectedProblem(problem);
+                setPage("problems");
+              }}
+            />
+          )}
+
+          {page === "problems" && (
+            <ProblemsPage
+              problems={problems}
+              selectedProblem={selectedProblem}
+              onSelect={setSelectedProblem}
+            />
+          )}
+
+          {page === "interventions" && <InterventionsPage />}
+
+          {page === "progress" && <ProgressPage />}
+
+          {page === "insights" && (
+            <InsightsPage observations={observations} />
+          )}
+        </div>
+      </main>
+
+      <MobileBottomNav page={page} onNavigate={navigate} />
+
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+
+function LoginPage({ onLogin }: { onLogin: () => void }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+
+  return (
+    <div className="auth-page">
+      <div className="auth-left">
+        <div className="auth-brand">
+          <div className="logo-mark large">I</div>
+          <span>INVISIBLE</span>
+        </div>
+
+        <div className="auth-message">
+          <span className="eyebrow">NOTICE THE UNNOTICED</span>
+          <h1>
+            Find the problems
+            <br />
+            you’ve stopped noticing.
+          </h1>
+
+          <p>
+            Tell INVISIBLE what happened in your day. It connects small
+            frustrations, finds recurring patterns, and turns them into
+            practical changes.
+          </p>
+
+          <div className="auth-example">
+            <div className="example-dot" />
+            <div>
+              <span>Example</span>
+              <strong>
+                “I was late again because I couldn't find my ID.”
+              </strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="auth-right">
+        <div className="auth-card">
+          <div className="auth-card-heading">
+            <span className="eyebrow">
+              {mode === "login" ? "WELCOME BACK" : "GET STARTED"}
+            </span>
+
+            <h2>
+              {mode === "login" ? "Sign in to INVISIBLE" : "Create your account"}
+            </h2>
+
+            <p>
+              {mode === "login"
+                ? "Continue discovering the patterns in your routine."
+                : "Start noticing the small things that add up."}
+            </p>
+          </div>
+
+          {mode === "signup" && (
+            <label className="field">
+              <span>Name</span>
+              <input placeholder="Your name" />
+            </label>
+          )}
+
+          <label className="field">
+            <span>Email</span>
+            <input type="email" placeholder="you@example.com" />
+          </label>
+
+          <label className="field">
+            <span>Password</span>
+            <input type="password" placeholder="••••••••" />
+          </label>
+
+          <button className="primary-button auth-submit" onClick={onLogin}>
+            {mode === "login" ? "Sign in" : "Create account"}
+            <ArrowRight size={18} />
+          </button>
+
+          <div className="auth-divider">
+            <span>or</span>
+          </div>
+
+          <button className="secondary-button" onClick={onLogin}>
+            Continue with Google
+          </button>
+
+          <p className="auth-switch">
+            {mode === "login"
+              ? "Don't have an account?"
+              : "Already have an account?"}{" "}
+            <button
+              onClick={() =>
+                setMode(mode === "login" ? "signup" : "login")
+              }
+            >
+              {mode === "login" ? "Create one" : "Sign in"}
+            </button>
+          </p>
+
+          <p className="auth-note">
+            Demo authentication for the prototype.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function Sidebar({
+  page,
+  onNavigate,
+  onLogout,
+}: {
+  page: Page;
+  onNavigate: (page: Page) => void;
+  onLogout: () => void;
+}) {
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-brand">
+        <div className="logo-mark">I</div>
+        <div>
+          <strong>INVISIBLE</strong>
+          <span>Pattern discovery</span>
+        </div>
+      </div>
+
+      <Navigation page={page} onNavigate={onNavigate} />
+
+      <div className="sidebar-bottom">
+        <button className="side-item">
+          <Settings size={18} />
+          Settings
+        </button>
+
+        <button className="side-item" onClick={onLogout}>
+          <LogOut size={18} />
+          Sign out
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+
+function Navigation({
+  page,
+  onNavigate,
+  mobile = false,
+}: {
+  page: Page;
+  onNavigate: (page: Page) => void;
+  mobile?: boolean;
+}) {
+  const items: { id: Page; label: string; icon: React.ReactNode }[] = [
+    { id: "dashboard", label: "Overview", icon: <Home size={18} /> },
+    { id: "tell", label: "Tell INVISIBLE", icon: <Plus size={18} /> },
+    { id: "discover", label: "Discover", icon: <Eye size={18} /> },
+    { id: "map", label: "Problem Map", icon: <Network size={18} /> },
+    { id: "problems", label: "Problems", icon: <Target size={18} /> },
+    {
+      id: "interventions",
+      label: "Interventions",
+      icon: <Lightbulb size={18} />,
+    },
+    { id: "progress", label: "Progress", icon: <TrendingDown size={18} /> },
+    { id: "insights", label: "Insights", icon: <BarChart3 size={18} /> },
+  ];
+
+  return (
+    <nav className={mobile ? "navigation mobile-navigation" : "navigation"}>
+      <span className="nav-label">WORKSPACE</span>
+
+      {items.map((item) => (
+        <button
+          key={item.id}
+          className={`side-item ${page === item.id ? "active" : ""}`}
+          onClick={() => onNavigate(item.id)}
+        >
+          {item.icon}
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+
+function Dashboard({
+  observations,
+  problems,
+  totalMinutes,
+  onNavigate,
+  onSelectProblem,
+}: {
+  observations: Observation[];
+  problems: Problem[];
+  totalMinutes: number;
+  onNavigate: (page: Page) => void;
+  onSelectProblem: (problem: Problem) => void;
+}) {
+  return (
+    <div className="dashboard-page">
+      <section className="hero-grid">
+        <div className="hero-card">
+          <div>
+            <span className="eyebrow">THIS WEEK</span>
+            <h2>
+              23 observations.
+              <br />
+              4 underlying problems.
+            </h2>
+            <p>
+              The small things are easier to understand when you look at them
+              together.
+            </p>
+          </div>
+
+          <button className="primary-button" onClick={() => onNavigate("tell")}>
+            Tell INVISIBLE
+            <ArrowRight size={18} />
+          </button>
+        </div>
+
+        <div className="stat-card">
+          <span className="eyebrow">TIME LOST</span>
+          <strong>{totalMinutes} min</strong>
+          <p>estimated this week</p>
+
+          <div className="stat-line">
+            <span />
+          </div>
+
+          <small>Small friction adds up.</small>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">RECENT</span>
+            <h2>What happened</h2>
+          </div>
+
+          <button className="text-button" onClick={() => onNavigate("tell")}>
+            Add observation
+            <ArrowRight size={16} />
+          </button>
+        </div>
+
+        <div className="observation-list">
+          {observations.slice(0, 5).map((item) => (
+            <div className="observation-row" key={item.id}>
+              <div className="observation-marker" />
+
+              <div className="observation-copy">
+                <strong>{item.text}</strong>
+                <span>
+                  {item.day} · {item.category}
+                </span>
+              </div>
+
+              <span className="minutes">
+                {item.minutes} min
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">DISCOVERED</span>
+            <h2>Problems underneath</h2>
+          </div>
+
+          <button className="text-button" onClick={() => onNavigate("map")}>
+            Open map
+            <ArrowRight size={16} />
+          </button>
+        </div>
+
+        <div className="problem-grid">
+          {problems.map((problem) => (
+            <button
+              className="problem-card"
+              key={problem.id}
+              onClick={() => onSelectProblem(problem)}
+            >
+              <div className="problem-card-top">
+                <span className={`severity ${problem.severity.toLowerCase()}`}>
+                  {problem.severity}
+                </span>
+                <ChevronRight size={18} />
+              </div>
+
+              <h3>{problem.title}</h3>
+              <p>{problem.description}</p>
+
+              <div className="problem-meta">
+                <span>{problem.occurrences} occurrences</span>
+                <span>{problem.minutes} min</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+
+function TellPage({
+  input,
+  setInput,
+  onSubmit,
+  discovering,
+  observations,
+}: {
+  input: string;
+  setInput: (value: string) => void;
+  onSubmit: () => void;
+  discovering: boolean;
+  observations: Observation[];
+}) {
+  return (
+    <div className="tell-page">
+      <section className="tell-card">
+        <div className="tell-intro">
+          <div className="large-icon">
+            <Activity size={24} />
+          </div>
+
+          <span className="eyebrow">NEW OBSERVATION</span>
+
+          <h2>What happened?</h2>
+
+          <p>
+            Don't overthink it. Describe the moment exactly how you remember
+            it.
+          </p>
+        </div>
+
+        <textarea
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          placeholder="Example: I spent 15 minutes looking for my charger again."
+          rows={6}
+        />
+
+        <div className="tell-footer">
+          <span>{input.length > 0 ? `${input.length} characters` : "Just write naturally."}</span>
+
+          <button
+            className="primary-button"
+            disabled={!input.trim() || discovering}
+            onClick={onSubmit}
+          >
+            {discovering ? "Finding connections..." : "Save observation"}
+            <ArrowRight size={18} />
+          </button>
+        </div>
+      </section>
+
+      <section className="tell-side">
+        <span className="eyebrow">RECENT EXAMPLES</span>
+
+        {observations.slice(0, 3).map((item) => (
+          <div className="mini-observation" key={item.id}>
+            <span>{item.day}</span>
+            <p>{item.text}</p>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+
+function DiscoverPage({
+  problems,
+  onMap,
+  onProblem,
+}: {
+  problems: Problem[];
+  onMap: () => void;
+  onProblem: (problem: Problem) => void;
+}) {
+  const mainProblem = problems[0];
+
+  return (
+    <div className="discover-page">
+      <section className="discovery-banner">
+        <div className="discovery-icon">
+          <Eye size={25} />
+        </div>
+
+        <div>
+          <span className="eyebrow">PATTERN FOUND</span>
+          <h2>These aren't separate problems.</h2>
+          <p>
+            Several observations appear to point toward the same underlying
+            friction.
+          </p>
+        </div>
+      </section>
+
+      <section className="reveal-card">
+        <div className="reveal-label">
+          <span>UNDERLYING PROBLEM</span>
+          <span>7 observations connected</span>
+        </div>
+
+        <h2>{mainProblem.title}</h2>
+
+        <p className="reveal-description">
+          {mainProblem.description}
+        </p>
+
+        <div className="evidence-grid">
+          <div>
+            <span>REPEATED</span>
+            <strong>{mainProblem.occurrences} times</strong>
+          </div>
+
+          <div>
+            <span>TIME COST</span>
+            <strong>{mainProblem.minutes} min/week</strong>
+          </div>
+
+          <div>
+            <span>FRICTION</span>
+            <strong>{mainProblem.severity}</strong>
+          </div>
+        </div>
+
+        <div className="reveal-actions">
+          <button className="primary-button" onClick={() => onProblem(mainProblem)}>
+            Explore problem
+            <ArrowRight size={18} />
+          </button>
+
+          <button className="secondary-button" onClick={onMap}>
+            View problem map
+          </button>
+        </div>
+      </section>
+
+      <section className="insight-strip">
+        <div>
+          <span className="eyebrow">WHY IT MATTERS</span>
+          <p>
+            One underlying problem can create several different-looking
+            frustrations.
+          </p>
+        </div>
+
+        <div className="strip-arrow">
+          <ArrowRight size={22} />
+        </div>
+
+        <div>
+          <span className="eyebrow">NEXT STEP</span>
+          <p>
+            Try one small intervention and measure what changes.
+          </p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+
+function NodeCard({
+  data,
+}: {
+  data: { title: string; subtitle: string; root?: boolean };
+}) {
+  return (
+    <div className={`graph-node ${data.root ? "root-node" : ""}`}>
+      <Handle type="target" position={Position.Top} />
+
+      <div className="node-dot" />
+
+      <div>
+        <strong>{data.title}</strong>
+        <span>{data.subtitle}</span>
+      </div>
+
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  );
+}
+
+
+function ProblemMap({
+  problems,
+  onProblem,
+}: {
+  problems: Problem[];
+  onProblem: (problem: Problem) => void;
+}) {
+  const nodes: Node[] = [
+    {
+      id: "id",
+      position: { x: 80, y: 40 },
+      data: { title: "Couldn't find ID", subtitle: "8 min · Monday" },
+      type: "problem",
+    },
+    {
+      id: "keys",
+      position: { x: 80, y: 180 },
+      data: { title: "Where are my keys?", subtitle: "10 min · Wednesday" },
+      type: "problem",
+    },
+    {
+      id: "charger",
+      position: { x: 470, y: 40 },
+      data: { title: "Forgot charger", subtitle: "6 min · Tuesday" },
+      type: "problem",
+    },
+    {
+      id: "notebook",
+      position: { x: 470, y: 180 },
+      data: { title: "Lost notebook", subtitle: "10 min · Thursday" },
+      type: "problem",
+    },
+    {
+      id: "root",
+      position: { x: 265, y: 330 },
+      data: {
+        title: "Departure preparation",
+        subtitle: "Underlying problem",
+        root: true,
+      },
+      type: "problem",
+    },
+  ];
+
+  const edges: Edge[] = [
+    { id: "e1", source: "id", target: "root", animated: true },
+    { id: "e2", source: "keys", target: "root", animated: true },
+    { id: "e3", source: "charger", target: "root", animated: true },
+    { id: "e4", source: "notebook", target: "root", animated: true },
+  ];
+
+  return (
+    <div className="map-page">
+      <div className="map-heading">
+        <div>
+          <span className="eyebrow">CONNECTIONS</span>
+          <h2>See how small events connect.</h2>
+          <p>
+            Individual observations become connected when INVISIBLE detects
+            meaningful relationships.
+          </p>
+        </div>
+
+        <button
+          className="primary-button"
+          onClick={() => onProblem(problems[0])}
+        >
+          Open underlying problem
+          <ArrowRight size={18} />
+        </button>
+      </div>
+
+      <div className="map-container">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={{ problem: NodeCard }}
+          fitView
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background gap={24} size={1} />
+          <Controls />
+        </ReactFlow>
+      </div>
+    </div>
+  );
+}
+
+
+function ProblemsPage({
+  problems,
+  selectedProblem,
+  onSelect,
+}: {
+  problems: Problem[];
+  selectedProblem: Problem | null;
+  onSelect: (problem: Problem) => void;
+}) {
+  if (selectedProblem) {
+    return (
+      <div className="detail-page">
+        <button className="back-button" onClick={() => onSelect(null as any)}>
+          ← All problems
+        </button>
+
+        <div className="detail-header">
+          <div>
+            <span className={`severity ${selectedProblem.severity.toLowerCase()}`}>
+              {selectedProblem.severity} friction
+            </span>
+
+            <h2>{selectedProblem.title}</h2>
+
+            <p>{selectedProblem.description}</p>
+          </div>
+        </div>
+
+        <div className="detail-stats">
+          <div>
+            <span>OCCURRENCES</span>
+            <strong>{selectedProblem.occurrences}</strong>
+          </div>
+
+          <div>
+            <span>TIME LOST</span>
+            <strong>{selectedProblem.minutes} min</strong>
+          </div>
+
+          <div>
+            <span>STATUS</span>
+            <strong>Needs attention</strong>
+          </div>
+        </div>
+
+        <div className="detail-section">
+          <span className="eyebrow">WHAT INVISIBLE FOUND</span>
+          <h3>The pattern is bigger than any single incident.</h3>
+          <p>
+            These events look unrelated when they happen individually. Across
+            several days, however, they point toward the same friction:
+            important things do not have a reliable place before you leave.
+          </p>
+        </div>
+
+        <div className="intervention-preview">
+          <div>
+            <span className="eyebrow">SUGGESTED INTERVENTION</span>
+            <h3>Create an exit station.</h3>
+            <p>
+              Keep your ID, keys, wallet and other departure essentials in one
+              consistent location near the door.
+            </p>
+          </div>
+
+          <button className="primary-button">
+            Try this
+            <ArrowRight size={18} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="problems-page">
+      <div className="page-intro">
+        <span className="eyebrow">UNDERLYING PATTERNS</span>
+        <p>
+          INVISIBLE groups repeated observations into problems that are easier
+          to act on.
+        </p>
+      </div>
+
+      <div className="problem-grid large">
+        {problems.map((problem) => (
+          <button
+            className="problem-card"
+            key={problem.id}
+            onClick={() => onSelect(problem)}
+          >
+            <div className="problem-card-top">
+              <span className={`severity ${problem.severity.toLowerCase()}`}>
+                {problem.severity}
+              </span>
+              <ChevronRight size={18} />
+            </div>
+
+            <h3>{problem.title}</h3>
+            <p>{problem.description}</p>
+
+            <div className="problem-meta">
+              <span>{problem.occurrences} occurrences</span>
+              <span>{problem.minutes} min/week</span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+function InterventionsPage() {
+  return (
+    <div className="simple-page">
+      <div className="page-intro">
+        <span className="eyebrow">SMALL EXPERIMENTS</span>
+        <h2>Change one thing. Then measure it.</h2>
+        <p>
+          INVISIBLE turns discovered problems into practical interventions
+          instead of generic advice.
+        </p>
+      </div>
+
+      <div className="intervention-list">
+        <Intervention
+          title="Create an exit station"
+          description="Keep ID, keys and other departure essentials in one consistent place."
+          status="Ready to try"
+        />
+
+        <Intervention
+          title="Keep the charger in your backpack"
+          description="Remove one repeated trip upstairs by giving the charger a permanent home."
+          status="Suggested"
+        />
+
+        <Intervention
+          title="Use a 25-minute focus window"
+          description="Reduce context switching during study sessions."
+          status="Not started"
+        />
+      </div>
+    </div>
+  );
+}
+
+
+function Intervention({
+  title,
+  description,
+  status,
+}: {
+  title: string;
+  description: string;
+  status: string;
+}) {
+  return (
+    <div className="intervention-row">
+      <div className="intervention-icon">
+        <Lightbulb size={21} />
+      </div>
+
+      <div className="intervention-copy">
+        <span>{status}</span>
+        <h3>{title}</h3>
+        <p>{description}</p>
+      </div>
+
+      <button className="secondary-button">
+        Try it
+      </button>
+    </div>
+  );
+}
+
+
+function ProgressPage() {
+  return (
+    <div className="progress-page">
+      <section className="progress-hero">
+        <div>
+          <span className="eyebrow">INTERVENTION RESULT</span>
+          <h2>Your departure friction is improving.</h2>
+          <p>
+            This demo compares observations before and after trying an
+            intervention.
+          </p>
+        </div>
+
+        <div className="progress-number">
+          <strong>61%</strong>
+          <span>estimated improvement</span>
+        </div>
+      </section>
+
+      <div className="before-after">
+        <div>
+          <span className="eyebrow">BEFORE</span>
+          <strong>7 incidents</strong>
+          <p>42 minutes lost</p>
+        </div>
+
+        <div className="progress-arrow">
+          <ArrowRight size={24} />
+        </div>
+
+        <div>
+          <span className="eyebrow">AFTER</span>
+          <strong>2 incidents</strong>
+          <p>14 minutes lost</p>
+        </div>
+      </div>
+
+      <div className="demo-note">
+        <CircleHelp size={18} />
+        <span>
+          Example data for the prototype. Real results would come from your
+          observations over time.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+
+function InsightsPage({
+  observations,
+}: {
+  observations: Observation[];
+}) {
+  return (
+    <div className="insights-page">
+      <div className="insight-main">
+        <span className="eyebrow">INVISIBLE INSIGHT</span>
+
+        <h2>
+          You tend to lose time before leaving home.
+        </h2>
+
+        <p>
+          Several different incidents are happening around the same part of
+          your routine. The individual events are small, but together they
+          create a repeatable pattern.
+        </p>
+
+        <div className="insight-stat">
+          <strong>{observations.length}</strong>
+          <span>recent observations being analyzed</span>
+        </div>
+      </div>
+
+      <div className="insight-cards">
+        <div className="insight-card">
+          <Clock3 size={20} />
+          <span>TIME PATTERN</span>
+          <h3>Small delays add up.</h3>
+          <p>
+            Repeated searches can quietly consume more time than one large
+            interruption.
+          </p>
+        </div>
+
+        <div className="insight-card">
+          <Network size={20} />
+          <span>CONNECTION</span>
+          <h3>Different problems can share one cause.</h3>
+          <p>
+            INVISIBLE looks across incidents instead of treating every event
+            separately.
+          </p>
+        </div>
+
+        <div className="insight-card">
+          <Sparkles size={20} />
+          <span>NEXT</span>
+          <h3>Try the smallest useful change.</h3>
+          <p>
+            The goal is not a perfect routine. It is measurable improvement.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function MobileBottomNav({
+  page,
+  onNavigate,
+}: {
+  page: Page;
+  onNavigate: (page: Page) => void;
+}) {
+  const items: { id: Page; label: string; icon: React.ReactNode }[] = [
+    { id: "dashboard", label: "Home", icon: <Home size={20} /> },
+    { id: "tell", label: "Tell", icon: <Plus size={20} /> },
+    { id: "discover", label: "Discover", icon: <Eye size={20} /> },
+    { id: "map", label: "Map", icon: <Network size={20} /> },
+    { id: "insights", label: "Insights", icon: <BarChart3 size={20} /> },
+  ];
+
+  return (
+    <nav className="mobile-bottom-nav">
+      {items.map((item) => (
+        <button
+          key={item.id}
+          className={page === item.id ? "active" : ""}
+          onClick={() => onNavigate(item.id)}
+        >
+          {item.icon}
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+
+export default App;
