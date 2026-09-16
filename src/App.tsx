@@ -1,8 +1,7 @@
-﻿import { useMemo, useState, type ReactNode } from "react";
+﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   ArrowRight,
-  BarChart3,
   Check,
   ChevronRight,
   Clock3,
@@ -18,14 +17,16 @@ import {
   Sparkles,
   Target,
   TrendingDown,
-  User,
+
   X,
   Zap,
 } from "lucide-react";
 
 /* =========================================================
-   TYPES
+   API
 ========================================================= */
+
+const API_BASE = "http://127.0.0.1:8000";
 
 type Page =
   | "dashboard"
@@ -35,6 +36,12 @@ type Page =
   | "interventions"
   | "progress"
   | "insights";
+
+type UserData = {
+  id: number;
+  name: string;
+  email: string;
+};
 
 type Observation = {
   id: string;
@@ -52,127 +59,148 @@ type Problem = {
   occurrences: number;
   minutes: number;
   color: string;
+  observationIds?: string[];
+  intervention?: string;
 };
+
+type InterventionStatus =
+  | "Try this"
+  | "Worked"
+  | "Didn't work"
+  | "Forgot to try";
 
 type Intervention = {
   id: string;
   title: string;
   description: string;
   type: string;
-  status: "Try this" | "Worked" | "Didn't work" | "Forgot to try";
+  status: InterventionStatus;
+  problemId?: string;
 };
 
-/* =========================================================
-   DEMO DATA
-========================================================= */
+async function apiRequest(
+  endpoint: string,
+  options: RequestInit = {}
+) {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
 
-const initialObservations: Observation[] = [
-  {
-    id: "obs-1",
-    text: "Couldn't find my ID before leaving for college and was late.",
-    category: "Departure",
-    minutes: 8,
-    date: "Today",
-  },
-  {
-    id: "obs-2",
-    text: "Forgot my charger and had to go upstairs.",
-    category: "Departure",
-    minutes: 5,
-    date: "Yesterday",
-  },
-  {
-    id: "obs-3",
-    text: "Where are my keys?",
-    category: "Departure",
-    minutes: 6,
-    date: "2 days ago",
-  },
-  {
-    id: "obs-4",
-    text: "Spent 10 minutes searching for my notebook.",
-    category: "Study",
-    minutes: 10,
-    date: "3 days ago",
-  },
-  {
-    id: "obs-5",
-    text: "Forgot my ID again.",
-    category: "Departure",
-    minutes: 5,
-    date: "4 days ago",
-  },
-];
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed: ${response.status}`);
+  }
 
-const initialProblems: Problem[] = [
-  {
-    id: "departure",
-    title: "Departure friction",
-    description:
-      "Several small delays happen while getting ready to leave home.",
-    category: "Home",
-    occurrences: 7,
-    minutes: 42,
-    color: "#2563eb",
-  },
-  {
-    id: "rework",
-    title: "Study rework",
-    description:
-      "Lost items and repeated work are creating avoidable study delays.",
-    category: "Study",
-    occurrences: 5,
-    minutes: 31,
-    color: "#ef6a55",
-  },
-  {
-    id: "searching",
-    title: "Things don't have a home",
-    description:
-      "Frequently used objects are being stored inconsistently.",
-    category: "Home",
-    occurrences: 4,
-    minutes: 24,
-    color: "#16a34a",
-  },
-  {
-    id: "context",
-    title: "Context switching",
-    description:
-      "Small interruptions are repeatedly breaking your flow.",
-    category: "Focus",
-    occurrences: 7,
-    minutes: 38,
-    color: "#7c3aed",
-  },
-];
+  return response.json();
+}
 
-const initialInterventions: Intervention[] = [
-  {
-    id: "int-1",
-    title: "Create an Exit Station",
-    description:
-      "Keep your ID, keys, wallet and charger in one place near the door.",
-    type: "30-second fix",
-    status: "Try this",
-  },
-  {
-    id: "int-2",
-    title: "Keep the charger in your backpack",
-    description:
-      "Remove one decision from your morning by keeping your charger permanently in your bag.",
-    type: "5-minute fix",
-    status: "Try this",
-  },
-  {
-    id: "int-3",
-    title: "One home for study materials",
-    description:
-      "Create a single visible location for your notebook and current assignments.",
-    type: "5-minute fix",
-    status: "Try this",
-  },
-];
+function formatDate(value: string | undefined) {
+  if (!value) return "Just now";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  const minutes = Math.floor(diff / 60000);
+
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+
+  return date.toLocaleDateString();
+}
+
+function estimateMinutes(text: string) {
+  const match = text.match(
+    /(\d+)\s*(?:min|mins|minute|minutes)/i
+  );
+
+  return match ? Number(match[1]) : 5;
+}
+
+function categoryColor(category: string) {
+  const value = category.toLowerCase();
+
+  if (value.includes("departure")) return "#2563eb";
+  if (value.includes("study")) return "#ef6a55";
+  if (value.includes("digital")) return "#7c3aed";
+  if (value.includes("time")) return "#16a34a";
+  if (value.includes("organization")) return "#0891b2";
+
+  return "#64748b";
+}
+
+function mapObservation(item: any): Observation {
+  return {
+    id: String(item.id),
+    text: item.text,
+    category: item.category || "General",
+    minutes: item.friction
+      ? estimateMinutes(item.text)
+      : estimateMinutes(item.text),
+    date: formatDate(item.created_at),
+  };
+}
+
+function mapProblem(item: any): Problem {
+  const category = item.category || "General";
+
+  return {
+    id: String(item.id),
+    title: item.title || "Underlying problem",
+    description: item.description || "",
+    category,
+    occurrences: Array.isArray(item.observation_ids)
+      ? item.observation_ids.length
+      : 0,
+    minutes: Number(item.estimated_minutes_lost || 0),
+    color: categoryColor(category),
+    observationIds: Array.isArray(item.observation_ids)
+      ? item.observation_ids.map(String)
+      : [],
+    intervention: item.intervention || "",
+  };
+}
+
+function mapIntervention(item: any): Intervention {
+  let status: InterventionStatus = "Try this";
+
+  if (item.status === "worked") status = "Worked";
+  else if (item.status === "didnt_work") status = "Didn't work";
+  else if (item.status === "forgot") status = "Forgot to try";
+  else if (
+    item.status === "Worked" ||
+    item.status === "Didn't work" ||
+    item.status === "Forgot to try"
+  ) {
+    status = item.status;
+  }
+
+  return {
+    id: String(item.id),
+    title: item.title || "Try this intervention",
+    description: item.action || "",
+    type: "Suggested fix",
+    status,
+    problemId: item.problem_id
+      ? String(item.problem_id)
+      : undefined,
+  };
+}
 
 /* =========================================================
    GLOBAL CSS
@@ -192,8 +220,8 @@ body,
 }
 
 body {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: #f6f7f9;
   color: #202532;
 }
@@ -208,10 +236,18 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+}
+
 .app {
   min-height: 100vh;
   background:
-    radial-gradient(circle at 85% 5%, rgba(37, 99, 235, 0.06), transparent 25%),
+    radial-gradient(
+      circle at 85% 5%,
+      rgba(37, 99, 235, 0.06),
+      transparent 25%
+    ),
     #f6f7f9;
 }
 
@@ -230,8 +266,16 @@ textarea:focus-visible {
   place-items: center;
   padding: 24px;
   background:
-    radial-gradient(circle at 20% 20%, rgba(37,99,235,.10), transparent 28%),
-    radial-gradient(circle at 80% 80%, rgba(124,58,237,.08), transparent 28%),
+    radial-gradient(
+      circle at 20% 20%,
+      rgba(37, 99, 235, 0.1),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 80% 80%,
+      rgba(124, 58, 237, 0.08),
+      transparent 28%
+    ),
     #f7f8fa;
 }
 
@@ -241,7 +285,7 @@ textarea:focus-visible {
   border: 1px solid #e5e7eb;
   border-radius: 28px;
   padding: 38px;
-  box-shadow: 0 24px 70px rgba(32,37,50,.10);
+  box-shadow: 0 24px 70px rgba(32, 37, 50, 0.1);
 }
 
 .logo-mark {
@@ -255,10 +299,6 @@ textarea:focus-visible {
   margin-bottom: 24px;
 }
 
-.logo-mark svg {
-  width: 25px;
-}
-
 .login-card h1 {
   font-size: 34px;
   margin: 0 0 10px;
@@ -268,6 +308,7 @@ textarea:focus-visible {
 .login-card p {
   color: #737b8c;
   line-height: 1.6;
+  margin-bottom: 25px;
 }
 
 .login-input {
@@ -276,7 +317,14 @@ textarea:focus-visible {
   background: #fafbfc;
   padding: 14px 16px;
   border-radius: 13px;
-  margin-top: 10px;
+  margin-top: 8px;
+  margin-bottom: 15px;
+  outline: none;
+}
+
+.login-input:focus {
+  border-color: #2563eb;
+  background: white;
 }
 
 .primary-button {
@@ -286,17 +334,27 @@ textarea:focus-visible {
   padding: 13px 18px;
   border-radius: 12px;
   font-weight: 700;
-  transition: .2s;
+  transition: 0.2s;
 }
 
-.primary-button:hover {
+.primary-button:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 8px 22px rgba(32,37,50,.16);
+  box-shadow: 0 8px 22px rgba(32, 37, 50, 0.16);
 }
 
 .login-button {
   width: 100%;
-  margin-top: 18px;
+  margin-top: 4px;
+}
+
+.error-message {
+  background: #fff1f0;
+  color: #c2413a;
+  border: 1px solid #ffd5d1;
+  border-radius: 10px;
+  padding: 11px 13px;
+  margin-top: 12px;
+  font-size: 13px;
 }
 
 /* LAYOUT */
@@ -310,7 +368,7 @@ textarea:focus-visible {
   width: 250px;
   flex: 0 0 250px;
   border-right: 1px solid #e5e7eb;
-  background: rgba(255,255,255,.88);
+  background: rgba(255, 255, 255, 0.88);
   padding: 22px 15px;
   position: sticky;
   top: 0;
@@ -324,7 +382,7 @@ textarea:focus-visible {
   padding: 5px 10px 28px;
   font-weight: 800;
   font-size: 19px;
-  letter-spacing: -.4px;
+  letter-spacing: -0.4px;
 }
 
 .brand-icon {
@@ -389,7 +447,7 @@ textarea:focus-visible {
 .topbar {
   height: 68px;
   border-bottom: 1px solid #e5e7eb;
-  background: rgba(255,255,255,.82);
+  background: rgba(255, 255, 255, 0.82);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -433,6 +491,7 @@ textarea:focus-visible {
   border: 0;
   background: transparent;
   color: #4d5564;
+  font-weight: 600;
 }
 
 .avatar {
@@ -490,7 +549,7 @@ textarea:focus-visible {
   background: white;
   border: 1px solid #e5e8ee;
   border-radius: 18px;
-  box-shadow: 0 7px 25px rgba(32,37,50,.045);
+  box-shadow: 0 7px 25px rgba(32, 37, 50, 0.045);
 }
 
 .card-padding {
@@ -533,7 +592,7 @@ textarea:focus-visible {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 1.35fr .65fr;
+  grid-template-columns: 1.35fr 0.65fr;
   gap: 18px;
 }
 
@@ -600,6 +659,36 @@ textarea:focus-visible {
   place-items: center;
   background: #fff2e8;
   color: #e26a2e;
+}
+
+/* EMPTY */
+
+.empty-state {
+  text-align: center;
+  padding: 55px 25px;
+  color: #737b8c;
+}
+
+.empty-state-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: #f1f4f8;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 16px;
+  color: #6d7482;
+}
+
+.empty-state h3 {
+  color: #202532;
+  margin: 0 0 8px;
+}
+
+.empty-state p {
+  max-width: 460px;
+  margin: 0 auto 20px;
+  line-height: 1.6;
 }
 
 /* TELL */
@@ -691,7 +780,7 @@ textarea:focus-visible {
   background: white;
   border: 1px solid #e5e8ee;
   border-radius: 22px;
-  box-shadow: 0 10px 32px rgba(32,37,50,.05);
+  box-shadow: 0 10px 32px rgba(32, 37, 50, 0.05);
   overflow: hidden;
 }
 
@@ -706,7 +795,7 @@ textarea:focus-visible {
 .problem-map-header h2 {
   margin: 0;
   font-size: 22px;
-  letter-spacing: -.6px;
+  letter-spacing: -0.6px;
 }
 
 .problem-map-header p {
@@ -736,7 +825,11 @@ textarea:focus-visible {
   height: 600px;
   padding: 8px;
   background:
-    radial-gradient(circle at center, rgba(37,99,235,.035), transparent 42%),
+    radial-gradient(
+      circle at center,
+      rgba(37, 99, 235, 0.035),
+      transparent 42%
+    ),
     #fcfcfd;
 }
 
@@ -779,12 +872,12 @@ textarea:focus-visible {
 .problem-card {
   padding: 22px;
   cursor: pointer;
-  transition: .2s;
+  transition: 0.2s;
 }
 
 .problem-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 30px rgba(32,37,50,.08);
+  box-shadow: 0 12px 30px rgba(32, 37, 50, 0.08);
 }
 
 .problem-card-top {
@@ -898,9 +991,9 @@ textarea:focus-visible {
 
 .progress-fill {
   height: 100%;
-  width: 61%;
-  background: #2563eb;
   border-radius: inherit;
+  background: #2563eb;
+  transition: width 0.3s;
 }
 
 .before-after {
@@ -1097,7 +1190,7 @@ textarea:focus-visible {
     right: 0;
     z-index: 50;
     height: 68px;
-    background: rgba(255,255,255,.94);
+    background: rgba(255, 255, 255, 0.94);
     border-top: 1px solid #e5e8ee;
     backdrop-filter: blur(14px);
     justify-content: space-around;
@@ -1164,8 +1257,41 @@ function PageHeading({
    LOGIN
 ========================================================= */
 
-function LoginPage({ onLogin }: { onLogin: () => void }) {
+function LoginPage({
+  onLogin,
+}: {
+  onLogin: (name: string, email: string) => Promise<void>;
+}) {
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    if (!name.trim() || !email.trim()) {
+      setError("Please enter both your name and email.");
+      return;
+    }
+
+    if (!email.includes("@")) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
+    setError("");
+    setLoading(true);
+
+    try {
+      await onLogin(name.trim(), email.trim().toLowerCase());
+    } catch (err: any) {
+      setError(
+        err?.message ||
+          "Could not connect to INVISIBLE backend."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="login-page">
@@ -1185,18 +1311,48 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
           className="login-input"
           placeholder="Enter your name"
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) =>
+            setName(event.target.value)
+          }
         />
+
+        <label className="muted">Your email</label>
+
+        <input
+          className="login-input"
+          type="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={(event) =>
+            setEmail(event.target.value)
+          }
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              submit();
+            }
+          }}
+        />
+
+        {error && (
+          <div className="error-message">{error}</div>
+        )}
 
         <button
           className="primary-button login-button"
-          onClick={onLogin}
+          onClick={submit}
+          disabled={loading}
         >
-          Enter INVISIBLE
-          <ArrowRight
-            size={16}
-            style={{ verticalAlign: "middle", marginLeft: 7 }}
-          />
+          {loading ? "Connecting..." : "Enter INVISIBLE"}
+
+          {!loading && (
+            <ArrowRight
+              size={16}
+              style={{
+                verticalAlign: "middle",
+                marginLeft: 7,
+              }}
+            />
+          )}
         </button>
       </div>
     </div>
@@ -1285,13 +1441,18 @@ function Sidebar({
       <div className="sidebar-bottom">
         <button
           className="nav-item"
-          onClick={() => alert("Settings coming soon")}
+          onClick={() =>
+            alert("Settings coming soon")
+          }
         >
           <Settings size={17} />
           Settings
         </button>
 
-        <button className="nav-item" onClick={onLogout}>
+        <button
+          className="nav-item"
+          onClick={onLogout}
+        >
           <LogOut size={17} />
           Log out
         </button>
@@ -1307,13 +1468,22 @@ function Sidebar({
 function TopBar({
   onMenu,
   onHome,
+  userName,
 }: {
   onMenu: () => void;
   onHome: () => void;
+  userName: string;
 }) {
+  const initial = userName
+    ? userName.charAt(0).toUpperCase()
+    : "U";
+
   return (
     <header className="topbar">
-      <button className="mobile-menu" onClick={onMenu}>
+      <button
+        className="mobile-menu"
+        onClick={onMenu}
+      >
         <Menu size={22} />
       </button>
 
@@ -1322,9 +1492,12 @@ function TopBar({
         <input placeholder="Search INVISIBLE..." />
       </div>
 
-      <button className="user-button" onClick={onHome}>
-        <span className="avatar">A</span>
-        <span>Astha</span>
+      <button
+        className="user-button"
+        onClick={onHome}
+      >
+        <span className="avatar">{initial}</span>
+        <span>{userName || "User"}</span>
       </button>
     </header>
   );
@@ -1337,28 +1510,36 @@ function TopBar({
 function Dashboard({
   observations,
   problems,
+  interventions,
   setPage,
 }: {
   observations: Observation[];
   problems: Problem[];
+  interventions: Intervention[];
   setPage: (page: Page) => void;
 }) {
-  const extraObservations = Math.max(
-    0,
-    observations.length - initialObservations.length
-  );
-
-  const weeklySignals = 23 + extraObservations;
-
   const totalMinutes = observations.reduce(
     (sum, item) => sum + item.minutes,
     0
   );
 
+  const worked = interventions.filter(
+    (item) => item.status === "Worked"
+  ).length;
+
+  const tracked = interventions.filter(
+    (item) => item.status !== "Try this"
+  ).length;
+
+  const reduction =
+    tracked > 0
+      ? Math.round((worked / tracked) * 100)
+      : 0;
+
   return (
     <>
       <PageHeading
-        eyebrow="YOUR WEEK"
+        eyebrow="YOUR DATA"
         title="What have you been not noticing?"
         description="INVISIBLE watches the small friction points that usually disappear from memory."
         action={
@@ -1369,7 +1550,10 @@ function Dashboard({
             Tell me what happened
             <ArrowRight
               size={15}
-              style={{ marginLeft: 7, verticalAlign: "middle" }}
+              style={{
+                marginLeft: 7,
+                verticalAlign: "middle",
+              }}
             />
           </button>
         }
@@ -1380,116 +1564,216 @@ function Dashboard({
           <div className="stat-icon">
             <Activity size={19} />
           </div>
-          <div className="stat-value">{weeklySignals}</div>
-          <div className="stat-label">small friction signals</div>
+          <div className="stat-value">
+            {observations.length}
+          </div>
+          <div className="stat-label">
+            friction signals
+          </div>
         </div>
 
         <div className="card stat-card">
           <div className="stat-icon">
             <Network size={19} />
           </div>
-          <div className="stat-value">{problems.length}</div>
-          <div className="stat-label">underlying problems</div>
+          <div className="stat-value">
+            {problems.length}
+          </div>
+          <div className="stat-label">
+            underlying problems
+          </div>
         </div>
 
         <div className="card stat-card">
           <div className="stat-icon">
             <Clock3 size={19} />
           </div>
-          <div className="stat-value">{totalMinutes}</div>
-          <div className="stat-label">minutes in recent logs</div>
+          <div className="stat-value">
+            {totalMinutes}
+          </div>
+          <div className="stat-label">
+            estimated minutes lost
+          </div>
         </div>
 
         <div className="card stat-card">
           <div className="stat-icon">
             <TrendingDown size={19} />
           </div>
-          <div className="stat-value">61%</div>
-          <div className="stat-label">estimated friction reduced</div>
+          <div className="stat-value">
+            {reduction}%
+          </div>
+          <div className="stat-label">
+            intervention success
+          </div>
         </div>
       </div>
 
-      <div className="dashboard-grid">
-        <div className="card hero-card">
-          <div className="eyebrow">I FOUND A PATTERN</div>
+      {observations.length === 0 ? (
+        <div className="card empty-state">
+          <div className="empty-state-icon">
+            <Eye size={24} />
+          </div>
 
-          <h2>
-            Your small delays may actually be one problem wearing
-            different disguises.
-          </h2>
+          <h3>Nothing invisible yet.</h3>
 
           <p>
-            Searching for your ID, keys, charger and notebook look
-            like separate incidents. INVISIBLE connects them to
-            discover the underlying friction.
+            Start by telling INVISIBLE about one small
+            frustration from your day. It will remember
+            it and look for patterns over time.
           </p>
 
-          <div className="hero-action">
+          <button
+            className="primary-button"
+            onClick={() => setPage("tell")}
+          >
+            Log your first observation
+            <ArrowRight
+              size={15}
+              style={{
+                marginLeft: 7,
+                verticalAlign: "middle",
+              }}
+            />
+          </button>
+        </div>
+      ) : (
+        <div className="dashboard-grid">
+          <div className="card hero-card">
+            <div className="eyebrow">
+              {problems.length > 0
+                ? "I FOUND A PATTERN"
+                : "I'M WATCHING"}
+            </div>
+
+            <h2>
+              {problems.length > 0
+                ? "Your small delays may actually be one problem wearing different disguises."
+                : "Keep telling me what happened. Patterns appear when small events repeat."}
+            </h2>
+
+            <p>
+              {problems.length > 0
+                ? `INVISIBLE has connected ${observations.length} observations into ${problems.length} underlying pattern${
+                    problems.length === 1 ? "" : "s"
+                  }.`
+                : "You don't need to organize or diagnose your observations. INVISIBLE does that part."}
+            </p>
+
+            <div className="hero-action">
+              <button
+                className="primary-button"
+                onClick={() =>
+                  setPage(
+                    problems.length > 0
+                      ? "discover"
+                      : "tell"
+                  )
+                }
+              >
+                {problems.length > 0
+                  ? "See the connection"
+                  : "Tell me more"}
+
+                <ArrowRight
+                  size={15}
+                  style={{
+                    marginLeft: 7,
+                    verticalAlign: "middle",
+                  }}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="card insight-card">
+            <div className="insight-icon">
+              <Sparkles size={20} />
+            </div>
+
+            <h3>
+              {problems.length > 0
+                ? "Something is emerging."
+                : "You're building a picture."}
+            </h3>
+
+            <p>
+              {problems.length > 0
+                ? "Different incidents are beginning to share common causes."
+                : "Keep logging ordinary frustrations. Repetition is what lets INVISIBLE discover hidden problems."}
+            </p>
+
             <button
-              className="primary-button"
-              onClick={() => setPage("discover")}
+              className="outline-button"
+              onClick={() =>
+                setPage(
+                  problems.length > 0
+                    ? "insights"
+                    : "tell"
+                )
+              }
             >
-              See the connection
-              <ArrowRight
-                size={15}
-                style={{ marginLeft: 7, verticalAlign: "middle" }}
+              {problems.length > 0
+                ? "Explore insight"
+                : "Add observation"}
+
+              <ChevronRight
+                size={14}
+                style={{
+                  verticalAlign: "middle",
+                  marginLeft: 4,
+                }}
               />
             </button>
           </div>
         </div>
+      )}
 
-        <div className="card insight-card">
-          <div className="insight-icon">
-            <Sparkles size={20} />
+      {observations.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <h2 className="section-title">
+            Recent observations
+          </h2>
+
+          <div className="observation-list">
+            {observations
+              .slice(0, 5)
+              .map((observation) => (
+                <div
+                  className="observation-row"
+                  key={observation.id}
+                >
+                  <span className="observation-dot" />
+
+                  <div className="observation-main">
+                    <div className="observation-text">
+                      {observation.text}
+                    </div>
+
+                    <div className="observation-meta">
+                      <span>
+                        {observation.category}
+                      </span>
+                      <span>•</span>
+                      <span>
+                        {observation.minutes} min
+                      </span>
+                      <span>•</span>
+                      <span>
+                        {observation.date}
+                      </span>
+                    </div>
+                  </div>
+
+                  <ChevronRight
+                    size={17}
+                    color="#a2a9b5"
+                  />
+                </div>
+              ))}
           </div>
-
-          <h3>What you're not noticing</h3>
-
-          <p>
-            You tend to lose time before leaving home. Several
-            different incidents share the same pattern.
-          </p>
-
-          <button
-            className="outline-button"
-            onClick={() => setPage("insights")}
-          >
-            Explore insight
-            <ChevronRight
-              size={14}
-              style={{ verticalAlign: "middle", marginLeft: 4 }}
-            />
-          </button>
         </div>
-      </div>
-
-      <div style={{ marginTop: 24 }}>
-        <h2 className="section-title">Recent observations</h2>
-
-        <div className="observation-list">
-          {observations.slice(0, 5).map((observation) => (
-            <div className="observation-row" key={observation.id}>
-              <span className="observation-dot" />
-
-              <div className="observation-main">
-                <div className="observation-text">
-                  {observation.text}
-                </div>
-
-                <div className="observation-meta">
-                  <span>{observation.category}</span>
-                  <span>•</span>
-                  <span>{observation.minutes} min</span>
-                  <span>•</span>
-                  <span>{observation.date}</span>
-                </div>
-              </div>
-
-              <ChevronRight size={17} color="#a2a9b5" />
-            </div>
-          ))}
-        </div>
-      </div>
+      )}
     </>
   );
 }
@@ -1502,16 +1786,23 @@ function TellPage({
   onAdd,
   observations,
 }: {
-  onAdd: (text: string) => void;
+  onAdd: (text: string) => Promise<void>;
   observations: Observation[];
 }) {
   const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const submit = () => {
-    if (!text.trim()) return;
+  const submit = async () => {
+    if (!text.trim() || loading) return;
 
-    onAdd(text.trim());
-    setText("");
+    setLoading(true);
+
+    try {
+      await onAdd(text.trim());
+      setText("");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -1528,7 +1819,9 @@ function TellPage({
             className="tell-textarea"
             placeholder="I spent 15 minutes looking for my charger again..."
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) =>
+              setText(event.target.value)
+            }
             onKeyDown={(event) => {
               if (
                 event.key === "Enter" &&
@@ -1547,27 +1840,42 @@ function TellPage({
             <button
               className="primary-button"
               onClick={submit}
-              disabled={!text.trim()}
+              disabled={!text.trim() || loading}
               style={{
-                opacity: text.trim() ? 1 : 0.45,
+                opacity:
+                  text.trim() && !loading ? 1 : 0.45,
               }}
             >
-              Remember this
-              <ArrowRight
-                size={15}
-                style={{ marginLeft: 7, verticalAlign: "middle" }}
-              />
+              {loading
+                ? "Remembering..."
+                : "Remember this"}
+
+              {!loading && (
+                <ArrowRight
+                  size={15}
+                  style={{
+                    marginLeft: 7,
+                    verticalAlign: "middle",
+                  }}
+                />
+              )}
             </button>
           </div>
         </div>
 
-        <div style={{ marginTop: 20 }} className="card card-padding">
-          <div className="eyebrow">HOW IT WORKS</div>
+        <div
+          style={{ marginTop: 20 }}
+          className="card card-padding"
+        >
+          <div className="eyebrow">
+            HOW IT WORKS
+          </div>
 
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
+              gridTemplateColumns:
+                "repeat(3, 1fr)",
               gap: 15,
             }}
           >
@@ -1614,122 +1922,114 @@ function ProblemMap({
   const [hoveredObservation, setHoveredObservation] =
     useState<string | null>(null);
 
+  const visibleObservations =
+    observations.slice(0, 10);
+
+  const observationNodes =
+    visibleObservations.map(
+      (observation, index) => {
+        const column = index % 5;
+        const row = Math.floor(index / 5);
+
+        return {
+          observation,
+          x: 110 + column * 210,
+          y: 95 + row * 155,
+        };
+      }
+    );
+
+  const problemNodes = problems.map(
+    (problem, index) => {
+      const spacing =
+        problems.length > 1
+          ? 850 / (problems.length - 1)
+          : 0;
+
+      return {
+        problem,
+        x:
+          problems.length > 1
+            ? 125 + index * spacing
+            : 550,
+        y: 490,
+      };
+    }
+  );
+
   const getProblemForObservation = (
     observation: Observation
-  ): Problem => {
-    const text = observation.text.toLowerCase();
-
-    if (
-      text.includes("id") ||
-      text.includes("key") ||
-      text.includes("charger") ||
-      text.includes("wallet") ||
-      text.includes("leave") ||
-      text.includes("leaving") ||
-      text.includes("upstairs") ||
-      text.includes("home")
-    ) {
-      const departureProblem = problems.find(
-        (problem) =>
-          problem.id === "departure" ||
-          problem.title.toLowerCase().includes("departure")
-      );
-
-      if (departureProblem) return departureProblem;
-    }
-
-    if (
-      text.includes("assignment") ||
-      text.includes("notebook") ||
-      text.includes("study") ||
-      text.includes("redo") ||
-      observation.category.toLowerCase() === "study"
-    ) {
-      const studyProblem = problems.find(
-        (problem) =>
-          problem.id === "rework" ||
-          problem.title.toLowerCase().includes("rework")
-      );
-
-      if (studyProblem) return studyProblem;
-    }
-
-    if (problems.length > 0) {
-      return problems[0];
-    }
-
-    return {
-      id: "unknown",
-      title: "Uncategorized",
-      description: "",
-      category: "General",
-      occurrences: 0,
-      minutes: 0,
-      color: "#64748b",
-    };
+  ) => {
+    return problems.find((problem) =>
+      problem.observationIds?.includes(
+        String(observation.id)
+      )
+    );
   };
 
-  const visibleObservations = observations.slice(0, 10);
+  if (
+    observations.length === 0 ||
+    problems.length === 0
+  ) {
+    return (
+      <div className="problem-map-shell">
+        <div className="problem-map-header">
+          <div>
+            <div className="eyebrow">
+              PROBLEM UNIVERSE
+            </div>
 
-  const observationNodes = visibleObservations.map(
-    (observation, index) => {
-      const column = index % 5;
-      const row = Math.floor(index / 5);
+            <h2>
+              Your problem map is still forming.
+            </h2>
 
-      return {
-        observation,
-        x: 110 + column * 210,
-        y: 95 + row * 155,
-      };
-    }
-  );
+            <p>
+              Add repeated observations and INVISIBLE
+              will connect them into underlying
+              problems.
+            </p>
+          </div>
 
-  const problemNodes = problems.map((problem, index) => {
-    const spacing =
-      problems.length > 1
-        ? 850 / (problems.length - 1)
-        : 0;
+          <div className="map-stat">
+            <strong>{observations.length}</strong>
+            <span>signals</span>
+          </div>
+        </div>
 
-    return {
-      problem,
-      x:
-        problems.length > 1
-          ? 125 + index * spacing
-          : 550,
-      y: 490,
-    };
-  });
+        <div className="empty-state">
+          <div className="empty-state-icon">
+            <Network size={24} />
+          </div>
 
-  const connections = observationNodes.map(
-    ({ observation, x, y }) => {
-      const problem =
-        getProblemForObservation(observation);
+          <h3>
+            No connection to show yet.
+          </h3>
 
-      const target = problemNodes.find(
-        (node) => node.problem.id === problem.id
-      );
-
-      return {
-        observation,
-        x,
-        y,
-        problem,
-        target,
-      };
-    }
-  );
+          <p>
+            The map becomes meaningful once INVISIBLE
+            has enough repeated signals to discover a
+            pattern.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="problem-map-shell">
       <div className="problem-map-header">
         <div>
-          <div className="eyebrow">PROBLEM UNIVERSE</div>
+          <div className="eyebrow">
+            PROBLEM UNIVERSE
+          </div>
 
-          <h2>See what your small problems have in common.</h2>
+          <h2>
+            See what your small problems have in common.
+          </h2>
 
           <p>
-            Each dot is an observation. Connections show patterns
-            that may point to a deeper underlying problem.
+            Each dot is an observation. Connections show
+            patterns detected from your stored data.
           </p>
         </div>
 
@@ -1746,20 +2046,28 @@ function ProblemMap({
           height="100%"
           preserveAspectRatio="xMidYMid meet"
         >
-          {/* DYNAMIC CONNECTIONS */}
-          {connections.map(
-            ({
-              observation,
-              x,
-              y,
-              problem,
-              target,
-            }) => {
+          {/* CONNECTIONS */}
+
+          {observationNodes.map(
+            ({ observation, x, y }) => {
+              const problem =
+                getProblemForObservation(
+                  observation
+                );
+
+              if (!problem) return null;
+
+              const target = problemNodes.find(
+                (node) =>
+                  node.problem.id === problem.id
+              );
+
               if (!target) return null;
 
               const active =
                 hoveredObservation === null ||
-                hoveredObservation === observation.id;
+                hoveredObservation ===
+                  observation.id;
 
               return (
                 <line
@@ -1768,40 +2076,56 @@ function ProblemMap({
                   y1={y + 30}
                   x2={target.x}
                   y2={target.y - 42}
-                  stroke={target.problem.color}
-                  strokeWidth={active ? 2.5 : 1}
-                  opacity={active ? 0.42 : 0.07}
+                  stroke={problem.color}
+                  strokeWidth={
+                    active ? 2.5 : 1
+                  }
+                  opacity={
+                    active ? 0.42 : 0.07
+                  }
                   strokeDasharray="5 6"
                 />
               );
             }
           )}
 
-          {/* DYNAMIC OBSERVATIONS */}
+          {/* OBSERVATIONS */}
+
           {observationNodes.map(
             ({ observation, x, y }) => {
               const problem =
-                getProblemForObservation(observation);
+                getProblemForObservation(
+                  observation
+                );
 
               const active =
                 hoveredObservation === null ||
-                hoveredObservation === observation.id;
+                hoveredObservation ===
+                  observation.id;
 
               return (
                 <g
                   key={observation.id}
                   transform={`translate(${x},${y})`}
                   style={{
-                    cursor: "pointer",
+                    cursor: problem
+                      ? "pointer"
+                      : "default",
                     opacity: active ? 1 : 0.3,
                   }}
                   onMouseEnter={() =>
-                    setHoveredObservation(observation.id)
+                    setHoveredObservation(
+                      observation.id
+                    )
                   }
                   onMouseLeave={() =>
                     setHoveredObservation(null)
                   }
-                  onClick={() => onSelect(problem)}
+                  onClick={() => {
+                    if (problem) {
+                      onSelect(problem);
+                    }
+                  }}
                 >
                   <circle
                     r="30"
@@ -1824,7 +2148,10 @@ function ProblemMap({
                     fill="#202532"
                   >
                     {observation.text.length > 25
-                      ? observation.text.slice(0, 25) + "..."
+                      ? observation.text.slice(
+                          0,
+                          25
+                        ) + "..."
                       : observation.text}
                   </text>
 
@@ -1842,14 +2169,17 @@ function ProblemMap({
             }
           )}
 
-          {/* DYNAMIC PROBLEM NODES */}
+          {/* PROBLEM NODES */}
+
           {problemNodes.map(
             ({ problem, x, y }) => (
               <g
                 key={problem.id}
                 transform={`translate(${x},${y})`}
                 style={{ cursor: "pointer" }}
-                onClick={() => onSelect(problem)}
+                onClick={() =>
+                  onSelect(problem)
+                }
               >
                 <rect
                   x="-92"
@@ -1888,7 +2218,10 @@ function ProblemMap({
                   fill="#202532"
                 >
                   {problem.title.length > 22
-                    ? problem.title.slice(0, 22) + "..."
+                    ? problem.title.slice(
+                        0,
+                        22
+                      ) + "..."
                     : problem.title}
                 </text>
 
@@ -1899,7 +2232,8 @@ function ProblemMap({
                   fontSize="10"
                   fill="#8a92a3"
                 >
-                  {problem.occurrences} repeated signals
+                  {problem.occurrences} repeated
+                  signals
                 </text>
               </g>
             )
@@ -1975,67 +2309,92 @@ function ProblemsPage({
         description="Individual incidents become useful when they reveal something repeated."
       />
 
-      <div className="problem-grid">
-        {problems.map((problem) => (
-          <div
-            className="card problem-card"
-            key={problem.id}
-            onClick={() => onSelect(problem)}
-          >
-            <div className="problem-card-top">
-              <div>
-                <div
-                  className="problem-color"
-                  style={{
-                    background: problem.color,
-                  }}
-                />
-
-                <h3 style={{ marginTop: 14 }}>
-                  {problem.title}
-                </h3>
-
-                <div className="badge">
-                  {problem.category}
-                </div>
-              </div>
-
-              <ChevronRight
-                size={18}
-                color="#9ba2ae"
-              />
-            </div>
-
-            <p>{problem.description}</p>
-
-            <div
-              style={{
-                display: "flex",
-                gap: 28,
-                marginTop: 20,
-              }}
-            >
-              <div>
-                <div className="problem-number">
-                  {problem.occurrences}
-                </div>
-                <div className="problem-small">
-                  repeated signals
-                </div>
-              </div>
-
-              <div>
-                <div className="problem-number">
-                  {problem.minutes}
-                </div>
-                <div className="problem-small">
-                  minutes lost
-                </div>
-              </div>
-            </div>
+      {problems.length === 0 ? (
+        <div className="card empty-state">
+          <div className="empty-state-icon">
+            <Target size={24} />
           </div>
-        ))}
-      </div>
+
+          <h3>No underlying problems yet.</h3>
+
+          <p>
+            Keep logging small frustrations. INVISIBLE
+            needs repeated signals before it can reveal
+            a deeper pattern.
+          </p>
+        </div>
+      ) : (
+        <div className="problem-grid">
+          {problems.map((problem) => (
+            <div
+              className="card problem-card"
+              key={problem.id}
+              onClick={() =>
+                onSelect(problem)
+              }
+            >
+              <div className="problem-card-top">
+                <div>
+                  <div
+                    className="problem-color"
+                    style={{
+                      background:
+                        problem.color,
+                    }}
+                  />
+
+                  <h3
+                    style={{
+                      marginTop: 14,
+                    }}
+                  >
+                    {problem.title}
+                  </h3>
+
+                  <div className="badge">
+                    {problem.category}
+                  </div>
+                </div>
+
+                <ChevronRight
+                  size={18}
+                  color="#9ba2ae"
+                />
+              </div>
+
+              <p>{problem.description}</p>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 28,
+                  marginTop: 20,
+                }}
+              >
+                <div>
+                  <div className="problem-number">
+                    {problem.occurrences}
+                  </div>
+
+                  <div className="problem-small">
+                    repeated signals
+                  </div>
+                </div>
+
+                <div>
+                  <div className="problem-number">
+                    {problem.minutes}
+                  </div>
+
+                  <div className="problem-small">
+                    minutes lost
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -2048,14 +2407,34 @@ function ProblemDetail({
   problem,
   onBack,
   setPage,
+  onCreateIntervention,
 }: {
   problem: Problem;
   onBack: () => void;
   setPage: (page: Page) => void;
+  onCreateIntervention: (
+    problem: Problem
+  ) => Promise<void>;
 }) {
+  const [loading, setLoading] = useState(false);
+
+  const createIntervention = async () => {
+    setLoading(true);
+
+    try {
+      await onCreateIntervention(problem);
+      setPage("interventions");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="card detail-card">
-      <button className="back-button" onClick={onBack}>
+      <button
+        className="back-button"
+        onClick={onBack}
+      >
         ← Back to problems
       </button>
 
@@ -2068,7 +2447,10 @@ function ProblemDetail({
         }}
       />
 
-      <div className="eyebrow" style={{ marginTop: 18 }}>
+      <div
+        className="eyebrow"
+        style={{ marginTop: 18 }}
+      >
         {problem.category}
       </div>
 
@@ -2078,18 +2460,28 @@ function ProblemDetail({
 
       <div className="detail-stats">
         <div className="detail-stat">
-          <strong>{problem.occurrences}</strong>
+          <strong>
+            {problem.occurrences}
+          </strong>
+
           <span>repeated signals</span>
         </div>
 
         <div className="detail-stat">
-          <strong>{problem.minutes}m</strong>
+          <strong>
+            {problem.minutes}m
+          </strong>
+
           <span>estimated time lost</span>
         </div>
 
         <div className="detail-stat">
-          <strong>6–7</strong>
-          <span>days of repeated friction</span>
+          <strong>
+            {problem.observationIds?.length ||
+              0}
+          </strong>
+
+          <span>linked observations</span>
         </div>
       </div>
 
@@ -2101,30 +2493,64 @@ function ProblemDetail({
           background: "#fafbfc",
         }}
       >
-        <div className="eyebrow">INVISIBLE'S READ</div>
+        <div className="eyebrow">
+          INVISIBLE'S READ
+        </div>
 
         <p style={{ margin: 0 }}>
-          These incidents may look unrelated individually, but
-          their repeated context suggests a common friction
-          point. The useful question is not "How do I solve
-          every incident?" but "What small change prevents the
-          whole cluster?"
+          These incidents may look unrelated
+          individually, but their repeated context
+          suggests a common friction point. The useful
+          question is not "How do I solve every
+          incident?" but "What small change prevents
+          the whole cluster?"
         </p>
       </div>
+
+      {problem.intervention && (
+        <div
+          className="card"
+          style={{
+            marginTop: 20,
+            padding: 22,
+            background: "#f8fbff",
+          }}
+        >
+          <div className="eyebrow">
+            SUGGESTED INTERVENTION
+          </div>
+
+          <p
+            style={{
+              margin: 0,
+              color: "#202532",
+              fontWeight: 600,
+            }}
+          >
+            {problem.intervention}
+          </p>
+        </div>
+      )}
 
       <button
         className="primary-button"
         style={{ marginTop: 20 }}
-        onClick={() => setPage("interventions")}
+        onClick={createIntervention}
+        disabled={loading}
       >
-        Find an intervention
-        <ArrowRight
-          size={15}
-          style={{
-            marginLeft: 7,
-            verticalAlign: "middle",
-          }}
-        />
+        {loading
+          ? "Creating..."
+          : "Try an intervention"}
+
+        {!loading && (
+          <ArrowRight
+            size={15}
+            style={{
+              marginLeft: 7,
+              verticalAlign: "middle",
+            }}
+          />
+        )}
       </button>
     </div>
   );
@@ -2141,8 +2567,8 @@ function InterventionsPage({
   interventions: Intervention[];
   onUpdate: (
     id: string,
-    status: Intervention["status"]
-  ) => void;
+    status: InterventionStatus
+  ) => Promise<void>;
 }) {
   return (
     <>
@@ -2152,53 +2578,118 @@ function InterventionsPage({
         description="INVISIBLE suggests interventions and learns from whether they actually work."
       />
 
-      <div className="intervention-list">
-        {interventions.map((item) => (
-          <div
-            className="card intervention-card"
-            key={item.id}
-          >
-            <div>
-              <div className="badge">{item.type}</div>
-
-              <h3>{item.title}</h3>
-
-              <p>{item.description}</p>
-            </div>
-
-            <div>
-              {item.status === "Try this" ? (
-                <button
-                  className="outline-button"
-                  onClick={() =>
-                    onUpdate(item.id, "Worked")
-                  }
-                >
-                  <Zap
-                    size={14}
-                    style={{
-                      verticalAlign: "middle",
-                      marginRight: 5,
-                    }}
-                  />
-                  Try it
-                </button>
-              ) : (
-                <span className="badge">
-                  <Check
-                    size={12}
-                    style={{
-                      verticalAlign: "middle",
-                      marginRight: 4,
-                    }}
-                  />
-                  {item.status}
-                </span>
-              )}
-            </div>
+      {interventions.length === 0 ? (
+        <div className="card empty-state">
+          <div className="empty-state-icon">
+            <Lightbulb size={24} />
           </div>
-        ))}
-      </div>
+
+          <h3>No interventions yet.</h3>
+
+          <p>
+            Once INVISIBLE discovers an underlying
+            problem, open it and create an intervention
+            to test a small change.
+          </p>
+        </div>
+      ) : (
+        <div className="intervention-list">
+          {interventions.map((item) => (
+            <div
+              className="card intervention-card"
+              key={item.id}
+            >
+              <div>
+                <div className="badge">
+                  {item.type}
+                </div>
+
+                <h3>{item.title}</h3>
+
+                <p>{item.description}</p>
+              </div>
+
+              <div>
+                {item.status === "Try this" ? (
+                  <button
+                    className="outline-button"
+                    onClick={() =>
+                      onUpdate(
+                        item.id,
+                        "Worked"
+                      )
+                    }
+                  >
+                    <Zap
+                      size={14}
+                      style={{
+                        verticalAlign:
+                          "middle",
+                        marginRight: 5,
+                      }}
+                    />
+                    Try it
+                  </button>
+                ) : (
+                  <span className="badge">
+                    <Check
+                      size={12}
+                      style={{
+                        verticalAlign:
+                          "middle",
+                        marginRight: 4,
+                      }}
+                    />
+                    {item.status}
+                  </span>
+                )}
+
+                {item.status === "Try this" && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      marginTop: 8,
+                    }}
+                  >
+                    <button
+                      className="outline-button"
+                      style={{
+                        fontSize: 11,
+                        padding: "7px 9px",
+                      }}
+                      onClick={() =>
+                        onUpdate(
+                          item.id,
+                          "Didn't work"
+                        )
+                      }
+                    >
+                      Didn't work
+                    </button>
+
+                    <button
+                      className="outline-button"
+                      style={{
+                        fontSize: 11,
+                        padding: "7px 9px",
+                      }}
+                      onClick={() =>
+                        onUpdate(
+                          item.id,
+                          "Forgot to try"
+                        )
+                      }
+                    >
+                      Later
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -2207,76 +2698,133 @@ function InterventionsPage({
    PROGRESS
 ========================================================= */
 
-function ProgressPage() {
+function ProgressPage({
+  interventions,
+}: {
+  interventions: Intervention[];
+}) {
+  const worked = interventions.filter(
+    (item) => item.status === "Worked"
+  ).length;
+
+  const didntWork = interventions.filter(
+    (item) => item.status === "Didn't work"
+  ).length;
+
+  const forgot = interventions.filter(
+    (item) => item.status === "Forgot to try"
+  ).length;
+
+  const tracked =
+    worked + didntWork + forgot;
+
+  const successRate =
+    tracked > 0
+      ? Math.round((worked / tracked) * 100)
+      : 0;
+
   return (
     <>
       <PageHeading
         eyebrow="MEASURE"
         title="Did the change actually help?"
-        description="Progress is based on repeated observations before and after an intervention."
+        description="Progress is based on how you respond to the interventions INVISIBLE suggests."
       />
 
-      <div className="card progress-card">
-        <div className="eyebrow">DEPARTURE FRICTION</div>
-
-        <div className="progress-number">61%</div>
-
-        <div className="progress-label">
-          estimated reduction in repeated friction
-        </div>
-
-        <div className="progress-bar">
-          <div className="progress-fill" />
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: 12,
-            color: "#8a92a1",
-          }}
-        >
-          <span>Before intervention</span>
-          <span>After intervention</span>
-        </div>
-
-        <div className="before-after">
-          <div className="before-after-box">
-            <strong>7</strong>
-            <span>friction incidents</span>
+      {interventions.length === 0 ? (
+        <div className="card empty-state">
+          <div className="empty-state-icon">
+            <TrendingDown size={24} />
           </div>
 
-          <div className="before-after-box">
-            <strong>2</strong>
-            <span>friction incidents</span>
-          </div>
+          <h3>No intervention results yet.</h3>
+
+          <p>
+            Try an intervention first. Once you mark
+            it as worked or not worked, INVISIBLE can
+            start showing your results.
+          </p>
         </div>
-
-        <div className="before-after">
-          <div className="before-after-box">
-            <strong>42 min</strong>
-            <span>estimated time lost</span>
+      ) : (
+        <div className="card progress-card">
+          <div className="eyebrow">
+            INTERVENTION RESULTS
           </div>
 
-          <div className="before-after-box">
-            <strong>14 min</strong>
-            <span>estimated time lost</span>
+          <div className="progress-number">
+            {successRate}%
           </div>
+
+          <div className="progress-label">
+            of tracked interventions marked as worked
+          </div>
+
+          <div className="progress-bar">
+            <div
+              className="progress-fill"
+              style={{
+                width: `${successRate}%`,
+              }}
+            />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent:
+                "space-between",
+              fontSize: 12,
+              color: "#8a92a1",
+            }}
+          >
+            <span>
+              {tracked} tracked
+            </span>
+
+            <span>
+              {interventions.length} total
+            </span>
+          </div>
+
+          <div className="before-after">
+            <div className="before-after-box">
+              <strong>{worked}</strong>
+              <span>worked</span>
+            </div>
+
+            <div className="before-after-box">
+              <strong>{didntWork}</strong>
+              <span>didn't work</span>
+            </div>
+          </div>
+
+          <div className="before-after">
+            <div className="before-after-box">
+              <strong>{forgot}</strong>
+              <span>forgot to try</span>
+            </div>
+
+            <div className="before-after-box">
+              <strong>
+                {interventions.length}
+              </strong>
+              <span>total suggestions</span>
+            </div>
+          </div>
+
+          <p
+            className="muted"
+            style={{
+              marginTop: 22,
+              lineHeight: 1.6,
+            }}
+          >
+            These numbers are calculated from your
+            actual intervention responses. No demo
+            values are being used.
+          </p>
         </div>
-
-        <p
-          className="muted"
-          style={{
-            marginTop: 22,
-            lineHeight: 1.6,
-          }}
-        >
-          Demo values shown for the prototype. In a real deployment,
-          these would be calculated from the user's historical
-          observations.
-        </p>
-      </div>
+      )}
     </>
   );
 }
@@ -2297,6 +2845,39 @@ function InsightsPage({
     0
   );
 
+  if (
+    observations.length === 0 &&
+    problems.length === 0
+  ) {
+    return (
+      <>
+        <PageHeading
+          eyebrow="INVISIBLE INSIGHTS"
+          title="What you might not notice yourself."
+          description="Patterns become visible when small events are remembered together."
+        />
+
+        <div className="card empty-state">
+          <div className="empty-state-icon">
+            <Sparkles size={24} />
+          </div>
+
+          <h3>Your first insight is waiting.</h3>
+
+          <p>
+            Log a few ordinary frustrations and INVISIBLE
+            will start looking for repeated causes.
+          </p>
+        </div>
+      </>
+    );
+  }
+
+  const largestProblem =
+    [...problems].sort(
+      (a, b) => b.minutes - a.minutes
+    )[0];
+
   return (
     <>
       <PageHeading
@@ -2311,15 +2892,17 @@ function InsightsPage({
             <Clock3 size={20} />
           </div>
 
-          <h3>You lose time before leaving.</h3>
+          <h3>
+            Small delays are adding up.
+          </h3>
 
           <p>
-            Several observations happen during the transition
-            from "at home" to "ready to leave."
+            Across the observations you've logged,
+            INVISIBLE has estimated:
           </p>
 
           <strong>
-            {totalMinutes} minutes currently logged
+            {totalMinutes} minutes of friction
           </strong>
         </div>
 
@@ -2328,48 +2911,73 @@ function InsightsPage({
             <Network size={20} />
           </div>
 
-          <h3>Different incidents share a cause.</h3>
+          <h3>
+            Different incidents can share a cause.
+          </h3>
 
           <p>
-            ID, keys, chargers and other objects repeatedly
-            create small search or preparation delays.
+            INVISIBLE has currently grouped your
+            observations into:
           </p>
 
           <strong>
-            {problems.length} underlying patterns
+            {problems.length} underlying{" "}
+            {problems.length === 1
+              ? "pattern"
+              : "patterns"}
           </strong>
         </div>
 
-        <div className="card insight-card">
-          <div className="insight-icon">
-            <TrendingDown size={20} />
+        {largestProblem && (
+          <div className="card insight-card">
+            <div className="insight-icon">
+              <TrendingDown size={20} />
+            </div>
+
+            <h3>
+              One pattern is costing the most time.
+            </h3>
+
+            <p>
+              Your largest currently detected cluster
+              is:
+            </p>
+
+            <strong>
+              {largestProblem.title}
+            </strong>
+
+            <p
+              style={{
+                marginTop: 8,
+              }}
+            >
+              {largestProblem.minutes} estimated
+              minutes across{" "}
+              {largestProblem.occurrences} signals.
+            </p>
           </div>
+        )}
 
-          <h3>Small delays add up.</h3>
+        {largestProblem?.intervention && (
+          <div className="card insight-card">
+            <div className="insight-icon">
+              <Lightbulb size={20} />
+            </div>
 
-          <p>
-            A five-minute problem feels insignificant once.
-            Repeated across a month, it becomes meaningful.
-          </p>
+            <h3>
+              The fix can be smaller than the problem.
+            </h3>
 
-          <strong>Estimated monthly impact: 2.4h</strong>
-        </div>
+            <p>
+              INVISIBLE suggests starting with:
+            </p>
 
-        <div className="card insight-card">
-          <div className="insight-icon">
-            <Lightbulb size={20} />
+            <strong>
+              {largestProblem.intervention}
+            </strong>
           </div>
-
-          <h3>The fix can be smaller than the problem.</h3>
-
-          <p>
-            Instead of trying to become more organized, create
-            one consistent location for the things you repeatedly
-            search for.
-          </p>
-
-          <strong>Suggested: Exit Station</strong>
-        </div>
+        )}
       </div>
     </>
   );
@@ -2436,19 +3044,20 @@ function MobileBottomNav({
 ========================================================= */
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [user, setUser] =
+    useState<UserData | null>(null);
 
   const [page, setPage] =
     useState<Page>("dashboard");
 
   const [observations, setObservations] =
-    useState<Observation[]>(initialObservations);
+    useState<Observation[]>([]);
 
-  const [problems] =
-    useState<Problem[]>(initialProblems);
+  const [problems, setProblems] =
+    useState<Problem[]>([]);
 
   const [interventions, setInterventions] =
-    useState<Intervention[]>(initialInterventions);
+    useState<Intervention[]>([]);
 
   const [selectedProblem, setSelectedProblem] =
     useState<Problem | null>(null);
@@ -2456,81 +3065,318 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] =
     useState(false);
 
-  const addObservation = (text: string) => {
-    const lower = text.toLowerCase();
+  const [loadingData, setLoadingData] =
+    useState(false);
 
-    let category = "General";
+  const [appError, setAppError] =
+    useState("");
 
-    if (
-      lower.includes("id") ||
-      lower.includes("key") ||
-      lower.includes("charger") ||
-      lower.includes("wallet") ||
-      lower.includes("leave") ||
-      lower.includes("home")
-    ) {
-      category = "Departure";
-    } else if (
-      lower.includes("assignment") ||
-      lower.includes("notebook") ||
-      lower.includes("study") ||
-      lower.includes("class")
-    ) {
-      category = "Study";
-    } else if (
-      lower.includes("work") ||
-      lower.includes("meeting")
-    ) {
-      category = "Work";
+  /* -------------------------------------------------------
+     LOAD USER DATA
+  ------------------------------------------------------- */
+
+  const loadUserData = async (
+    userId: number
+  ) => {
+    setLoadingData(true);
+    setAppError("");
+
+    try {
+      const [
+        observationData,
+        problemData,
+        interventionData,
+      ] = await Promise.all([
+        apiRequest(
+          `/api/observations?user_id=${userId}`
+        ),
+        apiRequest(
+          `/api/problems?user_id=${userId}`
+        ),
+        apiRequest(
+          `/api/interventions?user_id=${userId}`
+        ),
+      ]);
+
+      setObservations(
+        Array.isArray(observationData)
+          ? observationData.map(mapObservation)
+          : []
+      );
+
+      setProblems(
+        Array.isArray(problemData)
+          ? problemData.map(mapProblem)
+          : []
+      );
+
+      setInterventions(
+        Array.isArray(interventionData)
+          ? interventionData.map(mapIntervention)
+          : []
+      );
+    } catch (error: any) {
+      console.error(error);
+      setAppError(
+        "Could not load your data from the backend."
+      );
+
+      setObservations([]);
+      setProblems([]);
+      setInterventions([]);
+    } finally {
+      setLoadingData(false);
     }
+  };
 
-    const minuteMatch = text.match(
-      /(\d+)\s*(?:min|mins|minute|minutes)/i
+  /* -------------------------------------------------------
+     AUTO RESTORE SESSION
+  ------------------------------------------------------- */
+
+  useEffect(() => {
+    const savedUser =
+      localStorage.getItem(
+        "invisible_user"
+      );
+
+    if (!savedUser) return;
+
+    try {
+      const parsed = JSON.parse(savedUser);
+
+      if (parsed?.id) {
+        setUser(parsed);
+        loadUserData(parsed.id);
+      }
+    } catch {
+      localStorage.removeItem(
+        "invisible_user"
+      );
+    }
+  }, []);
+
+  /* -------------------------------------------------------
+     LOGIN
+  ------------------------------------------------------- */
+
+  const handleLogin = async (
+    name: string,
+    email: string
+  ) => {
+    const userData = await apiRequest(
+      "/api/users",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          email,
+        }),
+      }
     );
 
-    const minutes = minuteMatch
-      ? Number(minuteMatch[1])
-      : 5;
+    const backendUser = userData.user ?? userData;
 
-    const newObservation: Observation = {
-      id: `obs-${Date.now()}`,
-      text,
-      category,
-      minutes,
-      date: "Just now",
+    const currentUser: UserData = {
+      id: Number(backendUser.id),
+      name: backendUser.name,
+      email: backendUser.email,
     };
 
-    setObservations((current) => [
-      newObservation,
-      ...current,
-    ]);
+    setUser(currentUser);
 
-    setPage("discover");
-  };
-
-  const updateIntervention = (
-    id: string,
-    status: Intervention["status"]
-  ) => {
-    setInterventions((current) =>
-      current.map((item) =>
-        item.id === id
-          ? { ...item, status }
-          : item
-      )
+    localStorage.setItem(
+      "invisible_user",
+      JSON.stringify(currentUser)
     );
+
+    setPage("dashboard");
+    setSelectedProblem(null);
+
+    await loadUserData(currentUser.id);
   };
+
+  /* -------------------------------------------------------
+     ADD OBSERVATION
+  ------------------------------------------------------- */
+
+  const addObservation = async (
+    text: string
+  ) => {
+    if (!user) return;
+
+    setAppError("");
+
+    try {
+      const result = await apiRequest(
+        "/api/observations",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: user.id,
+            text,
+          }),
+        }
+      );
+
+      if (result?.observation) {
+        setObservations((current) => [
+          mapObservation(result.observation),
+          ...current,
+        ]);
+      }
+
+      if (Array.isArray(result?.problems)) {
+        setProblems(
+          result.problems.map(mapProblem)
+        );
+      } else {
+        await loadUserData(user.id);
+      }
+
+      setPage("discover");
+    } catch (error: any) {
+      console.error(error);
+
+      setAppError(
+        "Could not save this observation. Make sure the backend is running."
+      );
+
+      throw error;
+    }
+  };
+
+  /* -------------------------------------------------------
+     CREATE INTERVENTION
+  ------------------------------------------------------- */
+
+  const createIntervention = async (
+    problem: Problem
+  ) => {
+    if (!user) return;
+
+    const action =
+      problem.intervention ||
+      `Create a small change that reduces the repeated friction behind "${problem.title}".`;
+
+    try {
+      const result = await apiRequest(
+        "/api/interventions",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            user_id: user.id,
+            problem_id: Number(problem.id),
+            action,
+          }),
+        }
+      );
+
+      if (result) {
+        setInterventions((current) => [
+          ...current,
+          mapIntervention({
+            ...result,
+            title: problem.title,
+            action,
+          }),
+        ]);
+      }
+    } catch (error: any) {
+      console.error(error);
+
+      setAppError(
+        "Could not create the intervention."
+      );
+
+      throw error;
+    }
+  };
+
+  /* -------------------------------------------------------
+     UPDATE INTERVENTION
+  ------------------------------------------------------- */
+
+  const updateIntervention = async (
+    id: string,
+    status: InterventionStatus
+  ) => {
+    if (!user) return;
+
+    let backendStatus = "not_started";
+
+    if (status === "Worked") {
+      backendStatus = "worked";
+    } else if (status === "Didn't work") {
+      backendStatus = "didnt_work";
+    } else if (
+      status === "Forgot to try"
+    ) {
+      backendStatus = "forgot";
+    }
+
+    try {
+      await apiRequest(
+        `/api/interventions/${id}?user_id=${user.id}&status=${backendStatus}`,
+        {
+          method: "PATCH",
+        }
+      );
+
+      setInterventions((current) =>
+        current.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                status,
+              }
+            : item
+        )
+      );
+    } catch (error: any) {
+      console.error(error);
+
+      setAppError(
+        "Could not update the intervention."
+      );
+    }
+  };
+
+  /* -------------------------------------------------------
+     LOGOUT
+  ------------------------------------------------------- */
+
+  const logout = () => {
+    localStorage.removeItem(
+      "invisible_user"
+    );
+
+    setUser(null);
+    setObservations([]);
+    setProblems([]);
+    setInterventions([]);
+    setSelectedProblem(null);
+    setPage("dashboard");
+  };
+
+  /* -------------------------------------------------------
+     CURRENT PAGE
+  ------------------------------------------------------- */
 
   const currentPage = useMemo(() => {
     if (selectedProblem) {
       return (
         <ProblemDetail
           problem={selectedProblem}
-          onBack={() => setSelectedProblem(null)}
+          onBack={() =>
+            setSelectedProblem(null)
+          }
           setPage={(nextPage) => {
             setSelectedProblem(null);
             setPage(nextPage);
           }}
+          onCreateIntervention={
+            createIntervention
+          }
         />
       );
     }
@@ -2541,6 +3387,7 @@ export default function App() {
           <Dashboard
             observations={observations}
             problems={problems}
+            interventions={interventions}
             setPage={setPage}
           />
         );
@@ -2579,7 +3426,11 @@ export default function App() {
         );
 
       case "progress":
-        return <ProgressPage />;
+        return (
+          <ProgressPage
+            interventions={interventions}
+          />
+        );
 
       case "insights":
         return (
@@ -2600,17 +3451,25 @@ export default function App() {
     selectedProblem,
   ]);
 
-  if (!loggedIn) {
+  /* -------------------------------------------------------
+     LOGIN SCREEN
+  ------------------------------------------------------- */
+
+  if (!user) {
     return (
       <>
         <style>{GLOBAL_CSS}</style>
 
         <LoginPage
-          onLogin={() => setLoggedIn(true)}
+          onLogin={handleLogin}
         />
       </>
     );
   }
+
+  /* -------------------------------------------------------
+     APP
+  ------------------------------------------------------- */
 
   return (
     <>
@@ -2624,17 +3483,16 @@ export default function App() {
               setSelectedProblem(null);
               setPage(nextPage);
             }}
-            onLogout={() => {
-              setLoggedIn(false);
-              setSelectedProblem(null);
-              setPage("dashboard");
-            }}
+            onLogout={logout}
           />
 
           <main className="main-area">
             <TopBar
+              userName={user.name}
               onMenu={() =>
-                setMobileMenuOpen((current) => !current)
+                setMobileMenuOpen(
+                  (current) => !current
+                )
               }
               onHome={() => {
                 setSelectedProblem(null);
@@ -2651,7 +3509,8 @@ export default function App() {
                   right: 0,
                   zIndex: 40,
                   background: "white",
-                  borderBottom: "1px solid #e5e8ee",
+                  borderBottom:
+                    "1px solid #e5e8ee",
                   padding: 12,
                 }}
               >
@@ -2660,7 +3519,10 @@ export default function App() {
                   ["tell", "Tell INVISIBLE"],
                   ["discover", "Problem Map"],
                   ["problems", "Problems"],
-                  ["interventions", "Interventions"],
+                  [
+                    "interventions",
+                    "Interventions",
+                  ],
                   ["progress", "Progress"],
                   ["insights", "Insights"],
                 ].map(([id, label]) => (
@@ -2681,7 +3543,9 @@ export default function App() {
                           ? "#2563eb"
                           : "#4d5564",
                       fontWeight:
-                        page === id ? 700 : 500,
+                        page === id
+                          ? 700
+                          : 500,
                     }}
                     onClick={() => {
                       setSelectedProblem(null);
@@ -2696,7 +3560,54 @@ export default function App() {
             )}
 
             <div className="content">
-              {currentPage}
+              {appError && (
+                <div
+                  className="error-message"
+                  style={{
+                    marginBottom: 18,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent:
+                      "space-between",
+                    gap: 10,
+                  }}
+                >
+                  <span>{appError}</span>
+
+                  <button
+                    style={{
+                      border: 0,
+                      background:
+                        "transparent",
+                      color: "inherit",
+                    }}
+                    onClick={() =>
+                      setAppError("")
+                    }
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              )}
+
+              {loadingData ? (
+                <div className="card empty-state">
+                  <div className="empty-state-icon">
+                    <Activity size={24} />
+                  </div>
+
+                  <h3>
+                    Loading your INVISIBLE data...
+                  </h3>
+
+                  <p>
+                    Connecting your observations,
+                    patterns and interventions.
+                  </p>
+                </div>
+              ) : (
+                currentPage
+              )}
             </div>
           </main>
         </div>
@@ -2712,3 +3623,5 @@ export default function App() {
     </>
   );
 }
+
+
